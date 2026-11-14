@@ -233,8 +233,9 @@ metadata:
     default: "node"
     description: |
       Redis service type. Set to "node" for single-node mode, or "cluster" for Redis Cluster.
-      In cluster mode a transaction is atomic only when all its keys share a hash tag, like "{order1}a" and "{order1}b".
-      Otherwise it runs one script per hash slot, so an etag mismatch in one slot can leave writes in other slots applied.
+      In cluster mode, a transaction is atomic only when all its keys share a hash tag, like "{order1}a" and "{order1}b".
+      Unguarded transactions spanning hash slots run one script per slot and are not atomic.
+      Conditional transactions (ETag or first-write guarded) spanning hash slots are rejected before any writes are applied.
     example: "cluster"
   - name: redisDB
     required: false

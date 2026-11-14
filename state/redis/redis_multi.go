@@ -154,6 +154,15 @@ var multiSHA = func() string {
 
 var errJSONUnsupported = errors.New("redis transaction: content type application/json requires RedisJSON on the server")
 
+// errClusterMultiConditionalNotAtomic is returned before executing a
+// transaction when Redis Cluster would have to split a conditional Multi
+// across hash slots. Running those scripts sequentially could commit some
+// slots before another slot reports an ETag or first-write conflict.
+var errClusterMultiConditionalNotAtomic = fmt.Errorf(
+	"%w: Redis Cluster cannot atomically apply a conditional transaction spanning multiple hash slots; use a common hash tag for all keys",
+	state.ErrConditionalTransactionNotAtomic,
+)
+
 // Far below Redis's EXPIRE overflow so the script never fails after it wrote.
 const maxTTLSeconds int64 = math.MaxInt64 / 1000 / 2
 
@@ -250,7 +259,10 @@ func (r *StateStore) setOp(req *state.SetRequest, isJSON bool) (multiOp, error) 
 	return multiOp{key: req.Key, args: [multiArgsPerOp]any{"s", etag, jsonArg, bt, ttlArg, firstWrite}}, nil
 }
 
-// Redis Cluster rejects a multi-key script across hash slots.
+// Redis Cluster rejects a multi-key script across hash slots. Unguarded
+// operations retain the existing per-slot behavior, but a conditional
+// transaction must never be split: a conflict in a later slot would
+// otherwise leave earlier slots committed.
 func (r *StateStore) execMulti(ctx context.Context, ops []multiOp) error {
 	if len(ops) == 0 {
 		return nil
@@ -259,6 +271,9 @@ func (r *StateStore) execMulti(ctx context.Context, ops []multiOp) error {
 	batches := [][]multiOp{ops}
 	if r.isCluster() {
 		batches = groupBySlot(ops)
+		if len(batches) > 1 && hasConditionalOps(ops) {
+			return errClusterMultiConditionalNotAtomic
+		}
 	}
 
 	for _, batch := range batches {
@@ -297,6 +312,19 @@ func wrapUntyped(err error, format string, args ...any) error {
 		return err
 	}
 	return fmt.Errorf(format, append(args, err)...)
+}
+
+// hasConditionalOps reports whether any operation would be rejected by
+// the transaction's ETag or first-write guard if its target row changed.
+func hasConditionalOps(ops []multiOp) bool {
+	for _, op := range ops {
+		etag, _ := op.args[1].(string)
+		firstWrite, _ := op.args[5].(string)
+		if etag != "" || firstWrite == "1" {
+			return true
+		}
+	}
+	return false
 }
 
 func groupBySlot(ops []multiOp) [][]multiOp {

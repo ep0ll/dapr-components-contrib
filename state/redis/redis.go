@@ -301,10 +301,12 @@ func (r *StateStore) Set(ctx context.Context, req *state.SetRequest) error {
 	return nil
 }
 
-// Multi performs a transactional operation. succeeds only if all operations succeed, and fails if one or more operations fail.
+// Multi performs a transactional operation. In Redis Cluster, operations spanning
+// multiple hash slots are executed separately; conditional transactions spanning
+// multiple slots are rejected before any operation is applied.
 func (r *StateStore) Multi(ctx context.Context, request *state.TransactionalStateRequest) error {
 	if r.isCluster() && r.suppressActorStateStoreWarning.CompareAndSwap(false, true) {
-		r.logger.Warn("On Redis Cluster a transaction is atomic only when all its keys share a hash tag, otherwise an etag mismatch can leave other slots' writes applied.")
+		r.logger.Warn("On Redis Cluster, transactions spanning multiple hash slots are not atomic. Conditional transactions spanning multiple slots are rejected before any writes are applied.")
 	}
 
 	ops, err := r.buildMultiOps(request)
