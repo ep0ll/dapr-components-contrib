@@ -30,11 +30,25 @@ const (
 
 var ErrKeysLikeEmptyPattern = errors.New("keys like pattern cannot be empty")
 
-// ErrConditionalTransactionNotAtomic indicates that a state store cannot
+// conditionalTransactionNotAtomicError indicates that a state store cannot
 // guarantee all-or-nothing behavior for a transaction containing conditional
-// operations, such as ETag or first-write guards. Retrying the unchanged
-// request cannot resolve this limitation.
-var ErrConditionalTransactionNotAtomic = errors.New("state store cannot apply conditional transaction atomically")
+// operations, such as ETag or first-write guards.
+type conditionalTransactionNotAtomicError struct{}
+
+func (conditionalTransactionNotAtomicError) Error() string {
+	return "state store cannot apply conditional transaction atomically"
+}
+
+// ConditionalTransactionNotAtomic marks errors that are permanent for the
+// submitted transaction because a state store cannot enforce its conditional
+// operations atomically. Callers must not retry the unchanged request.
+func (conditionalTransactionNotAtomicError) ConditionalTransactionNotAtomic() bool {
+	return true
+}
+
+// ErrConditionalTransactionNotAtomic is returned when a conditional
+// transaction cannot be applied atomically by the selected state store.
+var ErrConditionalTransactionNotAtomic error = conditionalTransactionNotAtomicError{}
 
 // ETagError is a custom error type for etag exceptions.
 type ETagError struct {
